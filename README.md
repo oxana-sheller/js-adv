@@ -768,6 +768,734 @@ console.dir(document.body)
 ````
 
 
+# Шаблоны реактивности
+
+Реакция на вводимые пользователем данные, взаимодействие с серверами, ведение журналов, выполнение действий и т.д.
+Все эти задачи включают обновления пользовательского интерфейса. Запросы Ajax, URL-адреса браузера и изменения навигации
+делают каскадные изменения данных ключевым аспектом веб-разработки.
+
+Реактивность ассоциируется с фреймворками, но можно многому научиться, внедряя реактивность на чистом JavaScript.
+Мы можем смешивать и сопоставлять эти шаблоны, чтобы связать поведение с изменениями данных.
+
+Применение основных шаблонов с помощью чистого JavaScript приведет к уменьшению количества кода и повышению
+производительности веб-приложений, независимо от того, какой инструмент или структура используется.
+
+
+### [PubSub Pattern (Publish Subscriber](#pubsub-pattern-publish-subscriber)
+
+PubSub - один из самых фундаментальных шаблонов реактивности. Запуск события с помощью `publish()` позволяет любому
+подписчику прослушивать это событие `subscribe()` и выполнять любую обработку, в отрыве от того, что запускает это событие.
+
+````js
+const pubSub = {
+  events: {},
+  subscribe(event, callback) {
+    if (!this.events[event]) this.events[event] = [];
+    this.events[event].push(callback);
+  },
+  publish(event, data) {
+    if (this.events[event]) {
+      this.events[event].forEach(callback => callback(data));
+    }
+  }
+};
+
+pubSub.subscribe('update', data => console.log(data));
+pubSub.publish('update', 'Some update'); // Some update
+````
+
+Обратите внимание, что издатель _не знает_ о том, что его слушают, поэтому нет возможности отказаться от подписки
+или убрать за собой с этой простой реализацией.
+
+
+### [Custom Events: Native Browser API for PubSub](#custom-events-native-browser-api-for-pubsub)
+
+В браузере имеется API для запуска и подписки на пользовательские события. Оно позволяет отправлять данные вместе с
+пользовательскими событиями, используя `dispatchEvent`.
+
+````js
+const pizzaEvent = new CustomEvent("pizzaDelivery", {
+  detail: {
+    name: "supreme"
+  }
+});
+
+window.addEventListener("pizzaDelivery", (e) => console.log(e.detail.name));
+window.dispatchEvent(pizzaEvent);
+````
+
+Имеется возможность распространить пользовательские события на любой узел DOM. В примере кода используется глобальный
+объект `window`, также известный как глобальная шина событий, поэтому все в нашем приложении может прослушивать данные
+события и что-то делать с ними.
+
+````html
+<div id="pizza-store"></div>
+````
+
+````js
+const pizzaEvent = new CustomEvent("pizzaDelivery", {
+  detail: {
+    name: "supreme"
+  }
+});
+
+const pizzaStore = document.querySelector('#pizza-store');
+
+pizzaStore.addEventListener("pizzaDelivery", (e) => console.log(e.detail.name));
+pizzaStore.dispatchEvent(pizzaEvent);
+````
+
+
+### [Class Instance Custom Events: Subclassing EventTarget](#class-instance-custom-events-subclassing-eventtarget)
+
+Мы можем создать подкласс EventTarget для отправки событий в экземпляр класса,
+к которому наше приложение может привязаться:
+
+````js
+class PizzaStore extends EventTarget {
+  constructor() {
+    super();
+  }
+  
+  addPizza(flavor) {
+    // fire event directly on the class
+    this.dispatchEvent(new CustomEvent("pizzaAdded", {
+      detail: {
+        pizza: flavor
+      }
+    }));
+  }
+}
+
+const Pizzas = new PizzaStore();
+
+Pizzas.addEventListener("pizzaAdded", (e) => console.log('Added Pizza:', e.detail.pizza));
+Pizzas.addPizza("supreme");
+````
+
+Самое приятное в этом то, что события не происходят глобально на `window`. Можно запустить событие непосредственно
+в классе, и любая сущьность приложения может подключить прослушиватели событий непосредственно к этому классу.
+
+
+### [Observer Pattern](#observer-pattern)
+
+Шаблон наблюдателя имеет ту же основную предпосылку, что и шаблон PubSub. Это позволяет «подписаться» на поведение.
+И когда субъект запускает `notify`, он уведомляет всех подписчиков.
+
+````js
+class Subject {
+  constructor() {
+    this.observers = [];
+  }
+  
+  addObserver(observer) {
+    this.observers.push(observer);
+  }
+  
+  removeObserver(observer) {
+    const index = this.observers.indexOf(observer);
+    if (index > -1) {
+      this.observers.splice(index, 1);
+    }
+  }
+  
+  notify(data) {
+    this.observers.forEach(observer => observer.update(data));
+  }
+}
+
+class Observer {
+  update(data) {
+    console.log(data);
+  }
+}
+
+const subject = new Subject();
+const observer = new Observer(); 
+
+subject.addObserver(observer);
+subject.notify('Everyone gets pizzas!');
+````
+
+Основное отличие между от PubSub заключается в том, что субъект знает о своих наблюдателях и может их удалить.
+Они не _полностью_ отделены друг от друга, как в PubSub.
+
+
+### [Reactive Object Properties with Proxies](#reactive-object-properties-with-proxies)
+
+Прокси в JavaScript могут быть основой для реагирования после установки или получения свойств объекта.
+
+````js
+const handler = {
+  get: function(target, property) {
+    console.log(`Getting property ${property}`);
+    return target[property];
+  },
+  set: function(target, property, value) {
+    console.log(`Setting property ${property} to ${value}`);
+    target[property] = value;
+    return true; // indicates that the setting has been done successfully
+  }
+};
+
+const pizza = { name: 'Margherita', toppings: ['tomato sauce', 'mozzarella'] };
+const proxiedPizza = new Proxy(pizza, handler);
+
+console.log(proxiedPizza.name);  // Outputs "Getting property name" and "Margherita"
+proxiedPizza.name = 'Pepperoni'; // Outputs "Setting property name to Pepperoni"
+````
+
+Когда вы получаете доступ к свойству `proxyedPizza` или изменяете его, оно записывает сообщение в консоль.
+Но вы можете представить себе подключение любой функциональности.
+
+
+### [Reactive Individual Properties: Object.defineProperty](#reactive-individual-properties-object-defineproperty)
+
+Возможно сделать то же самое для определенного свойства, используя `Object.defineProperty`. Определить геттеры и сеттеры
+для свойств и запускать код при доступе или изменении свойства.
+
+````js
+const pizza = {
+  _name: 'Margherita' // Internal property
+};
+
+Object.defineProperty(pizza, 'name', {
+  get: function() {
+    console.log(`Getting property name`);
+    return this._name;
+  },
+  set: function(value) {
+    console.log(`Setting property name to ${value}`);
+    this._name = value;
+  }
+});
+
+// Example usage:
+console.log(pizza.name);  // Outputs "Getting property name" and "Margherita"
+pizza.name = 'Pepperoni'; // Outputs "Setting property name to Pepperoni"
+````
+
+Здесь мы используем `Object.defineProperty` для определения метода получения и установки свойства name объекта пиццы.
+Фактическое значение хранится в приватном свойстве `_name`, а методы получения и установки предоставляют доступ
+к этому значению.
+
+`Object.defineProperty` более многословен, чем использование `Proxy`, особенно если вы хотите применить то же поведение
+ко многим свойствам. Это мощный и гибкий способ определить индивидуальное поведение для отдельных свойств.
+
+
+### [Asynchronous Reactive Data with Promises](#asynchronous-reactive-data-with-promises)
+
+Давайте сделаем использование наблюдателей асинхронным! Таким образом, мы можем обновлять данные и запускать
+несколько наблюдателей асинхронно.
+
+````js
+class AsyncData {
+  constructor(initialData) {
+    this.data = initialData;
+    this.subscribers = [];
+  }
+
+  // Subscribe to changes in the data
+  subscribe(callback) {
+    if (typeof callback !== 'function') {
+      throw new Error('Callback must be a function');
+    }
+    
+    this.subscribers.push(callback);
+  }
+  
+  // Update the data and wait for all updates to complete
+  async set(key, value) {
+    this.data[key] = value;
+    
+    // Call the subscribed function and wait for it to resolve
+    const updates = this.subscribers.map(async (callback) => {
+      await callback(key, value);
+    });
+    
+    await Promise.allSettled(updates);
+  }
+}
+````
+
+Вот класс, который оборачивает объект данных и запускает обновление при изменении данных.
+
+
+#### [Awaiting Our Async Observers](#awaiting-our-async-observers)
+
+Допустим, мы хотим дождаться обработки всех подписок на наши асинхронные реактивные данные:
+
+````js
+const data = new AsyncData({ pizza: 'Pepperoni' });
+
+data.subscribe(async (key, value) => {
+  await new Promise(resolve => setTimeout(resolve, 500));
+  console.log(`Updated UI for ${key}: ${value}`);
+});
+
+data.subscribe(async (key, value) => {
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  console.log(`Logged change for ${key}: ${value}`);
+});
+
+// function to update data and wait for all updates to complete
+async function updateData() {
+  await data.set('pizza', 'Supreme'); // This will call the subscribed functions and wait for their promises to resolve
+  console.log('All updates complete.');
+}
+
+updateData();
+````
+
+Функция `updateData` теперь асинхронна, поэтому мы можем дождаться разрешения всех подписанных функций, прежде чем
+продолжить программу. Этот шаблон позволяет немного упростить манипулирование асинхронной реактивностью.
+
+### Reactive Systems](#reactive-systems)
+
+В основе популярных библиотек и фреймворков лежит множество более сложных реактивных систем: хуки в React,
+сигналы в Solid, Observables в Rx.js и многое другое. Обычно они имеют одну и ту же основную предпосылку:
+когда данные меняются, повторно отобразить компоненты или связанные фрагменты DOM.
+
+
+#### [Observables (Pattern of Rx.js)](#observables-pattern-of-rx-js)
+
+Observables и Observer Pattern — это не одно и то же, хотя это почти одно и то же слово.
+
+Observables позволяют определить способ создания последовательности значений с течением времени.
+Простой примитив Observable, который отправляет подписчикам последовательность значений, позволяя им реагировать
+по мере создания этих значений.
+
+````js
+class Observable {
+  constructor(producer) {
+    this.producer = producer;
+  }
+
+  // Method to allow a subscriber to subscribe to the observable
+  subscribe(observer) {
+    // Ensure the observer has the necessary functions
+    if (typeof observer !== 'object' || observer === null) {
+      throw new Error('Observer must be an object with next, error, and complete methods');
+    }
+
+    if (typeof observer.next !== 'function') {
+      throw new Error('Observer must have a next method');
+    }
+
+    if (typeof observer.error !== 'function') {
+      throw new Error('Observer must have an error method');
+    }
+
+    if (typeof observer.complete !== 'function') {
+      throw new Error('Observer must have a complete method');
+    }
+
+    const unsubscribe = this.producer(observer);
+
+    // Return an object with an unsubscribe method
+    return {
+      unsubscribe: () => {
+        if (unsubscribe && typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      }
+    }
+  }
+}
+````
+
+Использование:
+
+````js
+// Create a new observable that emits three values and then completes
+const observable = new Observable(observer => {
+  observer.next(1);
+  observer.next(2);
+  observer.next(3);
+  observer.complete();
+  
+  // Optional: Return a function to handle any cleanup if the observer unsubscribes
+  return () => {
+    console.log('Observer unsubscribed');
+  };
+});
+
+// Define an observer with next, error, and complete methods
+const observer = {
+  next: value => console.log('Received value:', value),
+  error: err => console.log('Error:', err),
+  complete: () => console.log('Completed')
+};
+
+// Subscribe to the observable
+const subscription = observable.subscribe(observer);
+
+// Optionally, you can later unsubscribe to stop receiving values
+subscription.unsubscribe();
+````
+
+Важнейшим компонентом Observable является метод `next()`, который отправляет данные наблюдателям. Метод `complete()`
+когда поток Observable закрывается. И метод `error()`, когда что-то идет не так. Кроме того, должен быть метод
+`subscribe()`, чтобы прослушивать изменения, и `unsubscribe()`, чтобы прекратить получение данных из потока.
+
+Наиболее популярные библиотеки, использующие этот шаблон - это [Rx.js](https://rxjs.dev) и [MobX](https://mobx.js.org).
+
+
+### ["Signals" (Pattern of SolidJS)](#signals-pattern-of-solidjs)
+
+Подсказка Райана Карниато [Курс «Реактивность с SolidJS»](https://frontendmasters.com/courses/reactivity-solidjs/?utm_source=blog&utm_medium=website&utm_campaign=reactivity).
+
+````js
+const context = [];
+
+export function createSignal(value) {
+  const subscriptions = new Set();
+  
+  const read = () => {
+    const observer = context[context.length - 1]
+    if (observer) subscriptions.add(observer);
+    return value;
+  }
+  
+  const write = (newValue) => {
+    value = newValue;
+    
+    for (const observer of subscriptions) {
+      observer.execute()
+    }
+  }
+  
+  return [read, write];
+}
+
+export function createEffect(fn) {
+  const effect = {
+    execute() {
+      context.push(effect);
+      fn();
+      context.pop();
+    }
+  }
+  
+  effect.execute();
+}
+````
+
+Использование реактивной системы:
+
+````js
+import { createSignal, createEffect } from "./reactive";
+const [count, setCount] = createSignal(0);
+
+createEffect(() => {
+  console.log(count());
+}); // 0
+
+setCount(10); // 10
+````
+
+Полный код [vanilla reactivity system](https://gist.github.com/1Marc/09e739caa6a82cc176ab4c2abd691814)
+на примере, который Райан пишет в своем курсе.
+
+
+### ["Observable-ish" Values (Frontend Masters)](#observable-ish-values-frontend-masters)
+
+["Observable-ish" Values](https://github.com/FrontendMasters/observablish-values) представляет собой еще один вариант
+реактивной системы в ванильном JavaScript. Это менее 100 строк кода! Смесь PubSub с возможностью вычислять значения
+путем добавления результатов нескольких издателей (publishers) вместе.
+
+Использование значений Observable-ish. Публикация изменений в функциях подписчика при изменении значений:
+
+````js
+const fn = function(current, previous) {}
+const obsValue = ov('initial');
+
+obsValue.subscribe(fn);    // subscribe to changes
+obsValue();                // 'initial'
+obsValue('initial');       // identical value, no change
+obsValue('new');           // fn('new', 'initial')
+obsValue.value = 'silent'; // silent update`
+````
+
+Изменение массивов и объектов не будет опубликовано, но их замена будет.
+
+````js
+const obsArray = ov([1, 2, 3]);
+obsArray.subscribe(fn);
+obsArray().push(4);          // silent update
+obsArray.publish();          // fn([1, 2, 3, 4]);
+obsArray([4, 5]);            // fn([4, 5], [1, 2, 3]);`
+````
+
+Передача функции кэширует результат как значение. Любые дополнительные аргументы будут переданы в функцию.
+На любые наблюдатели, вызываемые внутри функции, можно будет подписаться, а обновления этих наблюдателей
+будут пересчитывать значение.
+
+Должны быть вызваны дочерние наблюдаемые объекты; простые ссылки игнорируются. Если функция возвращает обещание,
+значение присваивается асинхронно после разрешения.
+
+````js
+const a = ov(1);
+const b = ov(2);
+const computed = ov(arg => { a() + b() + arg }, 3);
+computed.subscribe(fn);
+computed();             // fn(6)
+a(2);                   // fn(7, 6)
+````
+
+## [Reactive Rendering of UI](#reactive-rendering-of-ui)
+
+Вот несколько шаблонов для записи и чтения из DOM и CSS.
+
+
+### [Render Data to HTML String Literals](#render-data-to-html-string-literals)
+
+Пример рендеринга пользовательского интерфейса рецепта пиццы на основе данных.
+
+````js
+function PizzaRecipe(pizza) {
+  return `<div class="pizza-recipe">
+    <h1>${pizza.name}</h1>
+    <h3>Toppings: ${pizza.toppings.join(', ')}</h3>
+    <p>${pizza.description}</p>
+  </div>`;
+}
+
+function PizzaRecipeList(pizzas) {
+  return `<div class="pizza-recipe-list">
+    ${pizzas.map(PizzaRecipe).join('')}
+  </div>`;
+}
+
+var allPizzas = [
+  {
+    name: 'Margherita',
+    toppings: ['tomato sauce', 'mozzarella'],
+    description: 'A classic pizza with fresh ingredients.'
+  },
+  {
+    name: 'Pepperoni',
+    toppings: ['tomato sauce', 'mozzarella', 'pepperoni'],
+    description: 'A favorite among many, topped with delicious pepperoni.'
+  },
+  {
+    name: 'Veggie Supreme',
+    toppings: ['tomato sauce', 'mozzarella', 'bell peppers', 'onions', 'mushrooms'],
+    description: 'A delightful vegetable-packed pizza.'
+  }
+];
+
+// Render the list of pizzas
+function renderPizzas() {
+  document.querySelector('body').innerHTML = PizzaRecipeList(allPizzas);
+}
+
+renderPizzas(); // Initial render
+
+// Example of changing data and re-rendering
+function addPizza() {
+  allPizzas.push({
+    name: 'Hawaiian',
+    toppings: ['tomato sauce', 'mozzarella', 'ham', 'pineapple'],
+    description: 'A tropical twist with ham and pineapple.'
+  });
+
+  renderPizzas(); // Re-render the updated list
+}
+  
+// Call this function to add a new pizza and re-render the list
+addPizza();
+````
+
+`addPizza` демонстрирует, как изменить данные, добавив в список новый рецепт пиццы, а затем повторно отрисовав список
+чтобы отразить изменения.
+
+Главный недостаток этого подхода - при каждом рендеринге стирается весь DOM. Вы можете более разумно обновлять
+только те части DOM, которые изменяются с использованием такой библиотеки, как [lit-html](https://www.npmjs.com/package/lit-html)
+([руководство по использованию lit-html](https://lit.dev/docs/libraries/standalone-templates)).
+
+См. примеры других подходов в [репозитории Vanilla TodoMVC](https://github.com/1Marc/modern-todomvc-vanillajs) и
+связанная [статья Vanilla TodoMVC](https://frontendmasters.com/blog/vanilla-javascript-todomvc/).
+
+
+### [Reactive DOM Attributes: MutationObserver](#reactive-dom-attributes-mutationobserver)
+
+Один из способов сделать DOM реактивным - добавлять и удалять атрибуты. Мы можем прослушивать изменения атрибутов,
+используя API `MutationObserver`.
+
+````js
+const mutationCallback = (mutationsList) => {
+  for (const mutation of mutationsList) {
+    if (mutation.type !== "attributes" || mutation.attributeName !== "pizza-type") return;
+    
+    console.log('old:', mutation.oldValue)
+    console.log('new:', mutation.target.getAttribute("pizza-type"))
+  }
+}
+
+const observer = new MutationObserver(mutationCallback);
+observer.observe(document.getElementById('pizza-store'), { attributes: true });
+````
+
+Теперь мы можем обновить атрибут `pizza-type` из любого места нашей программы, а сам элемент
+привязан к обновлению этого атрибута!
+
+
+### [Reactive Attributes in Web Components](#reactive-attributes-in-web-components)
+
+Веб-компоненты предоставляют нативный способ прослушивания обновлений атрибутов и реагирования на них.
+
+````js
+class PizzaStoreComponent extends HTMLElement {
+  static get observedAttributes() {
+    return ['pizza-type'];
+  }
+  
+  constructor() {
+    super();
+    
+    const shadowRoot = this.attachShadow({ mode: 'open' });
+    shadowRoot.innerHTML = `<p>${this.getAttribute('pizza-type') || 'Default Content'}</p>`;
+  }
+  
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (name === 'my-attribute') {
+      this.shadowRoot.querySelector('div').textContent = newValue;
+      console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
+    }
+  }
+}
+
+customElements.define('pizza-store', PizzaStoreComponent);
+````
+
+````html
+<pizza-store pizza-type="Supreme"></pizza-store>
+````
+
+````js
+document.querySelector('pizza-store').setAttribute('pizza-type', 'BBQ Chicken!');
+````
+
+Это немного проще, но для использования этого API нам придется использовать веб-компоненты.
+
+
+### [Reactive Scrolling: IntersectionObserver](#reactive-scrolling-intersectionobserver)
+
+Мы можем подключить реактивность к элементам DOM, прокручивающимся в поле зрения.
+
+````js
+var pizzaStoreElement = document.getElementById('pizza-store');
+var observer = new IntersectionObserver(function(entries, observer) {
+  entries.forEach(function(entry) {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('animate-in');
+    } else {
+      entry.target.classList.remove('animate-in');
+    }
+  });
+});
+
+observer.observe(pizzaStoreElement);
+````
+
+Вот пример [анимации прокрутки на CodePen](https://codepen.io/1Marc/pen/wvEKOEr)
+в нескольких строках кода с использованием `IntersectionObserver`.
+
+
+### [Animation & Game Loop: requestAnimationFrame](#animation-game-loop-requestanimationframe)
+
+При разработке игр, Canvas, WebGL или других сайтах, анимации часто требуют записи в буфер, а затем записываем
+результаты в заданном цикле, когда поток рендеринга становится доступным. Делаем это с помощью `requestAnimationFrame`.
+
+````js
+function drawStuff() { 
+  // This is where you'd do game or animation rendering logic
+}
+
+// function to handle the animation
+function animate() {
+  drawStuff();
+  requestAnimationFrame(animate); // Continually calls animate when the next render frame is available
+}
+
+// Start the animation
+animate();
+````
+
+Этот метод используется в играх и во всем, что связано с рендерингом в реальном времени, для отрисовки сцены,
+когда кадры станут доступны.
+
+
+### [Reactive Animations: Web Animations API](#reactive-animations-web-animations-api)
+
+Также возможно создавать реактивную анимацию с помощью `Web Animations` API. Здесь мы анимируем масштаб элемента,
+положение и цвет с помощью API анимации.
+
+````js
+const el = document.getElementById('animatedElement');
+
+// Define the animation properties
+const animation = el.animate([
+  // Keyframes
+  { transform: 'scale(1)', backgroundColor: 'blue', left: '50px', top: '50px' },
+  { transform: 'scale(1.5)', backgroundColor: 'red', left: '200px', top: '200px' }
+], {
+  // Timing options
+  duration: 1000,
+  fill: 'forwards'
+});
+
+// Set the animation's playback rate to 0 to pause it
+animation.playbackRate = 0;
+
+// Add a click event listener to the element
+el.addEventListener('click', () => {
+  // If the animation is paused, play it
+  if (animation.playbackRate === 0) {
+    animation.playbackRate = 1;
+  } else {
+    // If the animation is playing, reverse it
+    animation.reverse();
+  }
+});
+````
+
+Реактивным в этом является то, что анимация может воспроизводиться относительно того места, где она расположена
+когда происходит взаимодействие (в данном случае меняющее его направление). Стандартные CSS-анимации и переходы
+не относительны их текущего положения.
+
+
+### [Reactive CSS: Custom Properties and `calc`](#reactive-css-custom-properties-and-calc)
+
+Наконец, мы можем написать реактивный CSS, объединив пользовательские свойства и `calc`.
+
+````js
+barElement.style.setProperty('--percentage', newPercentage);
+````
+
+In JavaScript, you can set a custom property value.
+
+````css
+.bar {
+  width: calc(100% / 4 - 10px);
+  height: calc(var(--percentage) * 1%);
+  background-color: blue;
+  margin-right: 10px;
+  position: relative;
+}
+````
+
+И в CSS мы теперь можем выполнять вычисления на основе процентов. Очень здорово, что мы можем добавлять расчеты
+прямо в CSS и выполнять работу по стилизации, не сохраняя логику рендеринга в JavaScript.
+
+К сведению: вы также можете прочитать эти свойства, если хотите внести изменения относительно текущего значения.
+
+````js
+getComputedStyle(barElement).getPropertyValue('--percentage');
+````
+
+
 # Selenium
 
 ## Преимущества совместного использования Selenium и JavaScript
